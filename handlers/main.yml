@@ -1,0 +1,5 @@
+---
+- name: Reload nftables
+  ansible.builtin.service:
+    name: "{{ firewall_service }}"
+    state: reloaded

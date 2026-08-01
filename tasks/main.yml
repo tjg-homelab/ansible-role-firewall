@@ -1,0 +1,81 @@
+---
+- name: Assert a supported platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >-
+      ansible-role-firewall targets the Debian family (nftables package and
+      service names, /etc/nftables.conf layout).
+    quiet: true
+
+- name: Assert SSH is reachable in the ruleset we are about to apply
+  # The whole role can be correct and still lock out the fleet. This refuses
+  # the one configuration that is never recoverable remotely: input policy drop
+  # with no SSH allowance at all. Deliberately an assert rather than a silent
+  # default, so turning SSH off is a decision someone has to write down.
+  ansible.builtin.assert:
+    that:
+      - firewall_allow_ssh | bool
+      - firewall_ssh_ports | length > 0
+    fail_msg: >-
+      firewall_input_policy is '{{ firewall_input_policy }}' but SSH is not
+      allowed (firewall_allow_ssh={{ firewall_allow_ssh }},
+      ports={{ firewall_ssh_ports }}). Applying this would drop the connection
+      managing this host and every future one. If you genuinely intend a host
+      with no SSH, set firewall_input_policy: accept or manage it out of band.
+    quiet: true
+  when: firewall_input_policy == 'drop'
+
+- name: Install nftables
+  ansible.builtin.apt:
+    name: "{{ firewall_package }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Render the ruleset
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: "{{ firewall_config_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+    # THE safety feature of this role. nft -c parses the candidate file without
+    # loading it, so a syntax error fails the play instead of being written and
+    # then applied to a host you can no longer reach. Unlike php-fpm/fail2ban,
+    # nftables CAN validate a standalone file, so this belongs here rather than
+    # as a separate task.
+    validate: /usr/sbin/nft -c -f %s
+  notify: Reload nftables
+
+- name: Ensure nftables is enabled and running
+  ansible.builtin.service:
+    name: "{{ firewall_service }}"
+    enabled: "{{ firewall_service_enabled | bool }}"
+    state: "{{ firewall_service_state }}"
+
+- name: Apply pending ruleset changes now
+  # Flush here rather than at end-of-play so the verification below inspects
+  # the ruleset that is actually loaded, not the previous one.
+  ansible.builtin.meta: flush_handlers
+
+- name: Read back the loaded ruleset
+  ansible.builtin.command: nft list table inet {{ firewall_table_name }}
+  register: firewall_loaded_ruleset
+  changed_when: false
+
+- name: Assert the loaded ruleset actually permits SSH
+  # Belt and braces: the file was valid AND the kernel accepted it AND the
+  # result contains an ssh accept. A ruleset that parsed but lost its ssh rule
+  # is exactly the failure this role must never ship.
+  ansible.builtin.assert:
+    that:
+      - "'ssh' in firewall_loaded_ruleset.stdout"
+    fail_msg: >-
+      The loaded ruleset contains no SSH accept rule. Investigate before
+      disconnecting — the current session may be surviving only on
+      established,related.
+    quiet: true
+  when:
+    - firewall_input_policy == 'drop'
+    - firewall_allow_ssh | bool

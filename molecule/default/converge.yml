@@ -1,0 +1,26 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  vars:
+    # The LAN-host shape: SSH restricted to the networks we administer from,
+    # which is the correct posture when no SSH is reachable from the internet.
+    firewall_ssh_sources:
+      - 192.168.2.0/24
+      - 192.168.3.0/24
+    firewall_rules:
+      - port: 80
+        comment: http
+      - port: 443
+        comment: https
+      - port: 53
+        proto: udp
+        sources:
+          - 192.168.2.0/24
+        comment: dns from lan
+      - port: "9100-9101"
+        sources:
+          - 192.168.3.0/24
+        comment: metrics range
+  roles:
+    - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"

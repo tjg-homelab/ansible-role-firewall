@@ -1,0 +1,26 @@
+---
+galaxy_info:
+  role_name: firewall
+  author: rnissen
+  description: >-
+    nftables host firewall with a data-driven allow-list, validated before it
+    is applied, and deliberately Docker-safe (owns one table, never flushes the
+    ruleset)
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+  galaxy_tags:
+    - firewall
+    - nftables
+    - security
+    - hardening
+
+dependencies: []

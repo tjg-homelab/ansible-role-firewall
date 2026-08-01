@@ -1,0 +1,76 @@
+---
+# Note: verify cannot reference role defaults — values match converge.yml.
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Read the ruleset file
+      ansible.builtin.slurp:
+        src: /etc/nftables.conf
+      register: firewall_verify_file
+
+    - name: Assert the file never flushes the global ruleset
+      # THE Docker-safety guard. `flush ruleset` silently deletes Docker's own
+      # nat/filter chains: containers keep running, published ports stop
+      # answering, nothing logs an error. If someone adds it, fail here.
+      ansible.builtin.assert:
+        that:
+          - "'flush ruleset' not in conf"
+        fail_msg: >-
+          /etc/nftables.conf contains `flush ruleset`, which destroys Docker's
+          chains. Delete only this role's own table instead.
+        quiet: true
+      vars:
+        conf: "{{ firewall_verify_file.content | b64decode }}"
+
+    - name: Read back the loaded ruleset
+      ansible.builtin.command: nft list table inet ansible_managed
+      register: firewall_verify_loaded
+      changed_when: false
+
+    - name: Assert policies and the always-on safety rules are loaded
+      ansible.builtin.assert:
+        that:
+          - "'type filter hook input' in rs"
+          - "'policy drop' in rs"
+          # output must NOT be dropped — egress filtering breaks tunnelled
+          # access and updates from the outside in
+          - "'policy accept' in rs"
+          - "'ct state established,related accept' in rs"
+          - "'iif \"lo\" accept' in rs or 'iif lo accept' in rs"
+          - "'ipv6-icmp' in rs"
+        quiet: true
+      vars:
+        rs: "{{ firewall_verify_loaded.stdout }}"
+
+    - name: Assert SSH is source-restricted, not open to the world
+      ansible.builtin.assert:
+        that:
+          - "'192.168.2.0/24' in rs"
+          - "'192.168.3.0/24' in rs"
+          - "'ssh' in rs"
+        quiet: true
+      vars:
+        rs: "{{ firewall_verify_loaded.stdout }}"
+
+    - name: Assert declared service rules rendered, including proto and ranges
+      ansible.builtin.assert:
+        that:
+          - "'dport 80 accept' in rs or 'dport http accept' in rs"
+          - "'dport 443' in rs or 'dport https' in rs"
+          # udp proto honoured rather than defaulting to tcp
+          - "'udp dport' in rs"
+          # port range survived templating
+          - "'9100-9101' in rs"
+        quiet: true
+      vars:
+        rs: "{{ firewall_verify_loaded.stdout }}"
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert nftables is enabled
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['nftables.service'].status == 'enabled'
+        quiet: true

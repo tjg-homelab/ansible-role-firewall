@@ -1,0 +1,46 @@
+---
+# ---------- Policies ----------
+firewall_input_policy: drop
+firewall_forward_policy: drop
+
+# OUTPUT STAYS ACCEPT. Do not "harden" this to drop without a specific reason
+# and a tested allow-list: outbound egress filtering breaks tunnelled access
+# (e.g. a Twingate connector), package updates, ACME renewals and container
+# image pulls — and it breaks them from the outside in, where you cannot log in
+# to fix it.
+firewall_output_policy: accept
+
+# ---------- Always-on safety allows ----------
+# These are not configurable away by accident. Loopback and established/related
+# are what stop a "correct" ruleset from cutting the connection applying it.
+firewall_allow_loopback: true
+firewall_allow_established: true
+
+# ICMP stays allowed. On IPv6 this is NOT optional politeness: dropping ICMPv6
+# breaks neighbour discovery and path MTU, which fails as intermittent hangs
+# rather than a clean refusal.
+firewall_allow_icmp: true
+
+# SSH is allowed by default and separately from firewall_rules, so the way you
+# reach the host is never something you can forget to declare.
+#   firewall_ssh_sources: []  = from anywhere (correct for a public VPS)
+#   otherwise                 = only those CIDRs (correct for a LAN host)
+firewall_allow_ssh: true
+firewall_ssh_ports: [22]
+firewall_ssh_sources: []
+
+# ---------- Service rules ----------
+# Data-driven. Each entry: port (int or "80-88" range), proto (tcp/udp,
+# default tcp), sources (list of CIDRs; empty = anywhere), comment.
+firewall_rules: []
+
+# ---------- Behaviour ----------
+firewall_package: nftables
+firewall_service: nftables
+firewall_config_path: /etc/nftables.conf
+firewall_service_enabled: true
+firewall_service_state: started
+
+# The table this role owns. It is flushed and rebuilt on every run; nothing
+# outside it is touched. See the DOCKER note in the template.
+firewall_table_name: ansible_managed

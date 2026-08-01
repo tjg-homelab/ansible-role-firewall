@@ -1,0 +1,71 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# Rendered by ansible-role-firewall — local edits WILL be overwritten.
+#
+# DOCKER SAFETY — read before changing anything here.
+# This file deliberately does NOT contain `flush ruleset`. Docker installs its
+# own nat/filter chains (via the iptables-nft backend), and a global flush
+# silently deletes them: containers keep running, published ports stop
+# answering, and nothing logs an error. Instead we delete and recreate ONLY our
+# own table, leaving Docker's untouched.
+#
+# Container traffic is also unaffected by the input policy below: published
+# ports arrive via nat/PREROUTING and traverse FORWARD, not INPUT. Filtering
+# container exposure is Docker's job (or a DOCKER-USER chain), not this table's.
+
+table inet {{ firewall_table_name }}
+delete table inet {{ firewall_table_name }}
+
+table inet {{ firewall_table_name }} {
+    chain input {
+        type filter hook input priority filter; policy {{ firewall_input_policy }};
+
+{% if firewall_allow_established %}
+        # Return traffic for connections we started, and the connection that is
+        # applying this ruleset right now.
+        ct state established,related accept
+        ct state invalid drop
+{% endif %}
+{% if firewall_allow_loopback %}
+        iif lo accept
+{% endif %}
+{% if firewall_allow_icmp %}
+        # ICMPv6 must be allowed or neighbour discovery and PMTU break, which
+        # presents as intermittent hangs rather than a clean failure.
+        meta l4proto ipv6-icmp accept
+        meta l4proto icmp accept
+{% endif %}
+{% if firewall_allow_ssh %}
+
+        # --- SSH (declared separately so it cannot be forgotten) ---
+{% for port in firewall_ssh_ports %}
+{% if firewall_ssh_sources | length > 0 %}
+        ip saddr { {{ firewall_ssh_sources | join(', ') }} } tcp dport {{ port }} accept comment "ssh from declared sources"
+{% else %}
+        tcp dport {{ port }} accept comment "ssh from anywhere"
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if firewall_rules | length > 0 %}
+
+        # --- Declared services ---
+{% for rule in firewall_rules %}
+{% if rule.sources | default([]) | length > 0 %}
+        ip saddr { {{ rule.sources | join(', ') }} } {{ rule.proto | default('tcp') }} dport {{ rule.port }} accept comment "{{ rule.comment | default(rule.port) }}"
+{% else %}
+        {{ rule.proto | default('tcp') }} dport {{ rule.port }} accept comment "{{ rule.comment | default(rule.port) }}"
+{% endif %}
+{% endfor %}
+{% endif %}
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy {{ firewall_forward_policy }};
+        # Docker's own FORWARD rules live in its tables and are evaluated
+        # independently of this one, so container networking still works.
+    }
+
+    chain output {
+        type filter hook output priority filter; policy {{ firewall_output_policy }};
+    }
+}
