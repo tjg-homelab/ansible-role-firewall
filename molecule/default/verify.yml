@@ -13,15 +13,23 @@
       # THE Docker-safety guard. `flush ruleset` silently deletes Docker's own
       # nat/filter chains: containers keep running, published ports stop
       # answering, nothing logs an error. If someone adds it, fail here.
+      # Matched per-line and comment-stripped, NOT as a substring: the template
+      # explains in a comment why `flush ruleset` is absent, and a naive
+      # substring check matches that prose and fails on a correct file.
       ansible.builtin.assert:
         that:
-          - "'flush ruleset' not in conf"
+          - flush_directives | length == 0
         fail_msg: >-
-          /etc/nftables.conf contains `flush ruleset`, which destroys Docker's
-          chains. Delete only this role's own table instead.
+          /etc/nftables.conf contains a `flush ruleset` directive
+          ({{ flush_directives }}), which destroys Docker's chains. Delete only
+          this role's own table instead.
         quiet: true
       vars:
         conf: "{{ firewall_verify_file.content | b64decode }}"
+        flush_directives: >-
+          {{ conf.split('\n') | map('trim')
+             | reject('match', '^#')
+             | select('match', '^flush\s+ruleset') | list }}
 
     - name: Read back the loaded ruleset
       ansible.builtin.command: nft list table inet ansible_managed
