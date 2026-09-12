@@ -47,6 +47,13 @@ scenario:
     - destroy
     - create
     - prepare
+    # AN-101: `check` runs converge.yml with --check on a host that has NEVER
+    # been converged for real -- no ansible_managed table exists yet. This is
+    # exactly the role's own documented safe-rollout workflow ("--check, then
+    # --limit a single low-value host") and exactly the scenario that used to
+    # fail: the SSH-reachability assert depended on a command task that
+    # --check always skips, with no ansible_check_mode guard of its own.
+    - check
     - converge
     - verify
     - idempotence

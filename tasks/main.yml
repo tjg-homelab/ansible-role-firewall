@@ -49,10 +49,18 @@
   notify: Reload nftables
 
 - name: Ensure nftables is enabled and running
+  # AN-101: on a truly fresh host, "Install nftables" above is itself only
+  # simulated under --check, so the service unit genuinely does not exist yet
+  # -- the service module can't simulate managing a service it can't find,
+  # and fails hard rather than reporting "would change". Nothing meaningful
+  # to preview here regardless: the template task above already reports
+  # whether the ruleset file itself would change, which is the useful signal
+  # under --check.
   ansible.builtin.service:
     name: "{{ firewall_service }}"
     enabled: "{{ firewall_service_enabled | bool }}"
     state: "{{ firewall_service_state }}"
+  when: not ansible_check_mode
 
 - name: Apply pending ruleset changes now
   # Flush here rather than at end-of-play so the verification below inspects
@@ -60,14 +68,28 @@
   ansible.builtin.meta: flush_handlers
 
 - name: Read back the loaded ruleset
+  # command/shell tasks never run under --check (there is nothing to
+  # simulate), so this is unconditionally skipped there -- not a bug on its
+  # own, but see the guard on the assert below that depends on it.
   ansible.builtin.command: nft list table inet {{ firewall_table_name }}
   register: firewall_loaded_ruleset
   changed_when: false
+  when: not ansible_check_mode
 
 - name: Assert the loaded ruleset actually permits SSH
   # Belt and braces: the file was valid AND the kernel accepted it AND the
   # result contains an ssh accept. A ruleset that parsed but lost its ssh rule
   # is exactly the failure this role must never ship.
+  #
+  # not ansible_check_mode: this reads back what the KERNEL actually loaded,
+  # which under --check is nothing -- the task above is skipped, nothing was
+  # ever applied to check. Without this guard, --check against a host with no
+  # prior ansible_managed table (the exact "first time onboarding a host"
+  # case this role's own README tells you to --check first) always failed
+  # this assert on firewall_loaded_ruleset.stdout being empty: a false
+  # failure from the verification step, not a real problem with the
+  # ruleset -- the earlier, check-mode-safe assert above (pure vars, no live
+  # state) is what actually guards against a no-SSH misconfiguration.
   ansible.builtin.assert:
     that:
       - "'ssh' in firewall_loaded_ruleset.stdout"
@@ -79,3 +101,4 @@
   when:
     - firewall_input_policy == 'drop'
     - firewall_allow_ssh | bool
+    - not ansible_check_mode
