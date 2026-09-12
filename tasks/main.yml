@@ -49,10 +49,18 @@
   notify: Reload nftables
 
 - name: Ensure nftables is enabled and running
+  # AN-101: on a truly fresh host, "Install nftables" above is itself only
+  # simulated under --check, so the service unit genuinely does not exist yet
+  # -- the service module can't simulate managing a service it can't find,
+  # and fails hard rather than reporting "would change". Nothing meaningful
+  # to preview here regardless: the template task above already reports
+  # whether the ruleset file itself would change, which is the useful signal
+  # under --check.
   ansible.builtin.service:
     name: "{{ firewall_service }}"
     enabled: "{{ firewall_service_enabled | bool }}"
     state: "{{ firewall_service_state }}"
+  when: not ansible_check_mode
 
 - name: Apply pending ruleset changes now
   # Flush here rather than at end-of-play so the verification below inspects

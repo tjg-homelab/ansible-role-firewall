@@ -1,5 +1,11 @@
 ---
 - name: Reload nftables
+  # AN-101: same reasoning as the "Ensure nftables is enabled and running"
+  # task -- on a truly fresh host that has never had nftables installed for
+  # real, --check never actually created the service, so there is nothing
+  # for this handler to reload and the service module fails outright rather
+  # than simulating.
   ansible.builtin.service:
     name: "{{ firewall_service }}"
     state: reloaded
+  when: not ansible_check_mode
